@@ -44,25 +44,59 @@ int main(int argc, char *argv[])
     char *pngname = "fb.png";
 
     int opt = 0;
+    int opt_compression_level = -1;
+    int opt_skip_png_creation = 0;
+    int opt_width = -1;
+    int opt_height = -1;
+    int opt_xoff = 0;
+    int opt_yoff = 0;
+    int opt_xadv = 1;
+    int opt_yadv = 1;
 
     //--------------------------------------------------------------------
 
-    while ((opt = getopt(argc, argv, "d:p:")) != -1)
+    while ((opt = getopt(argc, argv, "d:p:b:x:s:t:y:w:h:z:")) != -1)
     {
         switch (opt)
         {
         case 'd':
-
             fbdevice = optarg;
             break;
 
         case 'p':
-
             pngname = optarg;
+            opt_skip_png_creation = strcmp("skip", pngname) == 0;
+            break;
+
+        case 'z':
+            opt_compression_level = atoi(optarg);
+            break;
+
+        case 's':
+            opt_yadv = 1+atoi(optarg);
+            break;
+
+        case 't':
+            opt_xadv = 1+atoi(optarg);
+            break;
+
+        case 'x':
+            opt_xoff = atoi(optarg);
+            break;
+
+        case 'y':
+            opt_yoff = atoi(optarg);
+            break;
+
+        case 'w':
+            opt_width = atoi(optarg);
+            break;
+
+        case 'h':
+            opt_height = atoi(optarg);
             break;
 
         default:
-
             fprintf(stderr,
                     "Usage: %s [-d device] [-p pngname]\n",
                     program);
@@ -96,7 +130,6 @@ int main(int argc, char *argv[])
     }
 
     struct fb_var_screeninfo vinfo;
-
     if (ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo) == -1)
     {
         fprintf(stderr,
@@ -132,6 +165,10 @@ int main(int argc, char *argv[])
                 program,
                 strerror(errno));
         exit(EXIT_FAILURE);
+    }
+
+    if (opt_skip_png_creation) {
+        return 0;
     }
 
     uint8_t *fbp = memp;
@@ -179,21 +216,32 @@ int main(int argc, char *argv[])
     }
 
     png_init_io(png_ptr, pngfp);
+    int width = opt_width == -1 ? vinfo.xres : opt_width;
+    int rawwidth = width;
+    int height = opt_height == -1 ? vinfo.yres : opt_height;
+    int rawheight = height;
+
+    width /= opt_xadv;
+    height /= opt_yadv;
 
     png_set_IHDR(
         png_ptr,
         info_ptr,
-        vinfo.xres,
-        vinfo.yres,
+        width,
+        height,
         8,
         PNG_COLOR_TYPE_RGB,
         PNG_INTERLACE_NONE,
         PNG_COMPRESSION_TYPE_BASE,
         PNG_FILTER_TYPE_BASE);
 
+    if (opt_compression_level != -1) {
+        png_set_compression_level(png_ptr, opt_compression_level);
+    }
+
     png_write_info(png_ptr, info_ptr);
 
-    png_bytep png_buffer = malloc(vinfo.xres * 3 * sizeof(png_byte));
+    png_bytep png_buffer = malloc(width * 3 * sizeof(png_byte));
 
     if (png_buffer == NULL)
     {
@@ -211,14 +259,13 @@ int main(int argc, char *argv[])
 
     int y = 0;
 
-    for (y = 0; y < vinfo.yres; y++)
+    for (y = opt_yoff; y < opt_yoff + rawheight; y += opt_yadv)
     {
         int x;
+        int pb_offset = 0;
 
-        for (x = 0; x < vinfo.xres; x++)
+        for (x = opt_xoff; x < opt_xoff + rawwidth; x += opt_xadv)
         {
-            int pb_offset = 3 * x;
-
             size_t fb_offset = (vinfo.xoffset + x) * (bytes_per_pixel)
                              + (vinfo.yoffset + y) * finfo.line_length;
 
@@ -256,6 +303,8 @@ int main(int argc, char *argv[])
             png_buffer[pb_offset] = (r * 0xFF) / r_mask;
             png_buffer[pb_offset + 1] = (g * 0xFF)  / g_mask;
             png_buffer[pb_offset + 2] = (b * 0xFF)  / b_mask;
+
+            pb_offset += 3;
         }
 
         png_write_row(png_ptr, png_buffer);
